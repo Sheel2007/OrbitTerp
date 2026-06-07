@@ -45,6 +45,7 @@ OrbitTerp was heavily inspired by [Jupiterp](https://jupiterp.com) and also draw
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload
+python3 -m uvicorn backend.main:app --port 8000 --reload # alternatively
 ```
 
 The API runs at `http://localhost:8000`.
