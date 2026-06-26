@@ -96,6 +96,17 @@ export function AboutModal({ open, onClose }: Props) {
             </ul>
           </div>
 
+          {/* Data Disclaimer */}
+          <div className="bg-gray-800/50 rounded-lg px-3 py-2.5 space-y-1.5">
+            <p className="text-gray-400 text-xs leading-relaxed">
+              <span className="text-gray-300 font-medium">Seat availability:</span> OrbitTerp only suggests sections that have open seats.
+              However, seat data from UMD's Schedule of Classes can be up to 24 hours behind actual registration changes —
+              a section shown here may have filled since. Always verify availability on{' '}
+              <a href="https://app.testudo.umd.edu/soc" target="_blank" rel="noopener noreferrer" className="text-red-400 hover:text-red-300 underline">Testudo</a>
+              {' '}before registering.
+            </p>
+          </div>
+
           {/* Open Source */}
           <div>
             <h3 className="text-sm font-semibold text-white mb-1.5">Open Source</h3>

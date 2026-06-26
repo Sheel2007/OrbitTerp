@@ -325,6 +325,7 @@ function App() {
               schedule={schedules[selectedIndex] ?? null}
               loading={status === 'loading'}
               courseCount={selectedCourses.length}
+              semester={semester}
             />
           </div>
         </div>

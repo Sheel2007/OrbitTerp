@@ -1,11 +1,129 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { Schedule, Section, Meeting } from '../types';
 import { minutesToTime, parseDays, DAY_ORDER, COURSE_COLORS } from '../utils/timeUtils';
+
+function CoursePopup({ section, meeting, color, onClose, anchorRect, semester }: {
+  section: Section;
+  meeting?: Meeting;
+  color: string;
+  onClose: () => void;
+  anchorRect: DOMRect;
+  semester: string;
+}) {
+  const popupRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (popupRef.current && !popupRef.current.contains(e.target as Node)) onClose();
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('mousedown', handleClick); document.removeEventListener('keydown', handleKey); };
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!popupRef.current) return;
+    const popup = popupRef.current;
+    const pw = popup.offsetWidth;
+    const ph = popup.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = anchorRect.right + 8;
+    let top = anchorRect.top;
+
+    if (left + pw > vw - 12) left = anchorRect.left - pw - 8;
+    if (left < 12) left = Math.max(12, (vw - pw) / 2);
+    if (top + ph > vh - 12) top = vh - ph - 12;
+    if (top < 12) top = 12;
+
+    setPos({ top, left });
+  }, [anchorRect]);
+
+  const isAsync = meeting ? isAsyncMeeting(meeting) : isAsyncSection(section);
+  const sectionNum = section.section_id.split('-').pop();
+  const courseId = section.course_id;
+  const testudoUrl = `https://app.testudo.umd.edu/soc/${semester}/${courseId.replace(/[0-9]/g, '').trim()}/${courseId}`;
+
+  return (
+    <div className="fixed inset-0 z-50" style={{ pointerEvents: 'auto' }}>
+      <div
+        ref={popupRef}
+        className="fixed bg-gray-900 border border-gray-600 rounded-xl shadow-2xl w-64 sm:w-72 overflow-hidden"
+        style={{ top: pos.top, left: pos.left, borderTop: `3px solid ${color}` }}
+      >
+        <div className="p-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="font-bold text-white text-sm">{courseId}</div>
+              <div className="text-xs text-gray-400">Section {sectionNum}</div>
+            </div>
+            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none -mt-1">&times;</button>
+          </div>
+
+          {/* Instructor */}
+          <div className="text-sm text-gray-200">
+            {section.instructors.length > 0 ? section.instructors.join(', ') : 'TBA'}
+          </div>
+
+          {/* Meetings */}
+          <div className="space-y-1">
+            {section.meetings.map((m, i) => (
+              <div key={i} className="text-xs text-gray-400">
+                {isAsyncMeeting(m) ? (
+                  <span className="uppercase">Online Async</span>
+                ) : (
+                  <>
+                    <span className="font-medium text-gray-300">{m.days}</span>{' '}
+                    {minutesToTime(m.start_time)} - {minutesToTime(m.end_time)}
+                    {m.building && <span className="text-gray-500"> · {m.building} {m.room}</span>}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Stats */}
+          <div className="flex gap-4 pt-1">
+            <div className="text-center">
+              <div className="text-yellow-400 text-sm font-semibold">★ {section.professor_rating.toFixed(1)}</div>
+              <div className="text-[10px] text-gray-500">Rating</div>
+            </div>
+            <div className="text-center">
+              <div className="text-green-400 text-sm font-semibold">{section.avg_gpa.toFixed(2)}</div>
+              <div className="text-[10px] text-gray-500">Avg GPA</div>
+            </div>
+            <div className="text-center">
+              <div className="text-blue-400 text-sm font-semibold">{section.open_seats}/{section.total_seats}</div>
+              <div className="text-[10px] text-gray-500">Open Seats</div>
+            </div>
+          </div>
+
+          {/* View on Testudo */}
+          <a
+            href={testudoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-center text-xs font-medium text-red-400 hover:text-red-300 bg-red-400/10 hover:bg-red-400/20 rounded-lg py-2 transition-colors"
+          >
+            View on Testudo →
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface Props {
   schedule: Schedule | null;
   loading?: boolean;
   courseCount?: number;
+  semester?: string;
 }
 
 const START_HOUR = 8;
@@ -133,7 +251,7 @@ function CalendarGrid({ hourHeight, timeColWidth, hasOtherCol, children, otherCo
   );
 }
 
-export function WeeklyCalendar({ schedule, loading = false, courseCount = 4 }: Props) {
+export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, semester = '' }: Props) {
   const hourHeight = typeof window !== 'undefined' && window.innerWidth < 640 ? 40 : 56;
   const timeColWidth = typeof window !== 'undefined' && window.innerWidth < 640 ? 32 : 50;
 
@@ -141,6 +259,12 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4 }: P
     () => generateSkeletonBlocks(courseCount),
     [courseCount]
   );
+
+  const [popupData, setPopupData] = useState<{ section: Section; meeting?: Meeting; color: string; rect: DOMRect } | null>(null);
+  const handleCardClick = useCallback((e: React.MouseEvent, section: Section, color: string, meeting?: Meeting) => {
+    e.stopPropagation();
+    setPopupData({ section, meeting, color, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() });
+  }, []);
 
   // Elapsed timer for loading messages
   const [elapsed, setElapsed] = useState(0);
@@ -288,7 +412,8 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4 }: P
         return (
           <div
             key={`async-${section.section_id}`}
-            className="relative rounded px-1 sm:px-1.5 py-1 overflow-hidden cursor-pointer group transition-all hover:brightness-125 hover:shadow-lg"
+            onClick={(e) => handleCardClick(e, section, color)}
+            className="relative rounded px-1 sm:px-1.5 py-1 overflow-hidden cursor-pointer transition-all hover:brightness-125 hover:shadow-lg"
             style={{
               height: `${cardHeight}px`,
               backgroundColor: color + '25',
@@ -307,20 +432,6 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4 }: P
             <div className="text-[8px] sm:text-[9px] text-gray-500 truncate leading-tight">
               {section.section_id.split('-').pop()}
             </div>
-
-            {/* Hover tooltip */}
-            <div className="hidden md:group-hover:block absolute left-full top-0 ml-2 z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl w-52 pointer-events-none">
-              <div className="font-semibold text-white text-xs">{section.course_id} - {section.section_id.split('-')[1]}</div>
-              <div className="text-xs text-gray-300 mt-1">{section.instructors.join(', ') || 'TBA'}</div>
-              <div className="text-xs text-gray-400 mt-1">Online Asynchronous</div>
-              <div className="flex gap-3 mt-2 text-[10px]">
-                <span className="text-yellow-400">★ {section.professor_rating.toFixed(1)}</span>
-                <span className="text-green-400">GPA: {section.avg_gpa.toFixed(2)}</span>
-              </div>
-              <div className="text-[10px] text-gray-500 mt-0.5">
-                Seats: {section.open_seats}/{section.total_seats}
-              </div>
-            </div>
           </div>
         );
       })}
@@ -328,67 +439,66 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4 }: P
   ) : undefined;
 
   return (
-    <CalendarGrid hourHeight={hourHeight} timeColWidth={timeColWidth} hasOtherCol={hasOtherCol} otherContent={otherContent}>
-      {(day) => (
-        <>
-          {schedule.sections.map((section) =>
-            section.meetings
-              .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
-              .map((meeting, midx) => {
-                const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
-                const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
-                const color = courseColors[section.course_id];
+    <>
+      <CalendarGrid hourHeight={hourHeight} timeColWidth={timeColWidth} hasOtherCol={hasOtherCol} otherContent={otherContent}>
+        {(day) => (
+          <>
+            {schedule.sections.map((section) =>
+              section.meetings
+                .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
+                .map((meeting, midx) => {
+                  const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
+                  const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
+                  const color = courseColors[section.course_id];
 
-                return (
-                  <div
-                    key={`${section.section_id}-${midx}`}
-                    className="absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer group transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
-                    style={{
-                      top: `${top}px`,
-                      height: `${Math.max(height, 20)}px`,
-                      backgroundColor: color + '30',
-                      borderLeft: `3px solid ${color}`,
-                    }}
-                  >
-                    <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
-                      {section.course_id}
+                  return (
+                    <div
+                      key={`${section.section_id}-${midx}`}
+                      onClick={(e) => handleCardClick(e, section, color, meeting)}
+                      className="absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
+                      style={{
+                        top: `${top}px`,
+                        height: `${Math.max(height, 20)}px`,
+                        backgroundColor: color + '30',
+                        borderLeft: `3px solid ${color}`,
+                      }}
+                    >
+                      <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
+                        {section.course_id}
+                      </div>
+                      {height > 25 && (
+                        <div className="text-[8px] sm:text-[9px] text-gray-300 truncate leading-tight">
+                          {section.section_id.split('-').pop()} · {meeting.building} {meeting.room}
+                        </div>
+                      )}
+                      {height > 35 && section.instructors.length > 0 && (
+                        <div className="hidden sm:block text-[9px] text-gray-400 truncate leading-tight">
+                          {section.instructors[0]}
+                        </div>
+                      )}
+                      {height > 48 && (
+                        <div className="hidden sm:block text-[9px] text-gray-500 truncate leading-tight">
+                          {minutesToTime(meeting.start_time)} - {minutesToTime(meeting.end_time)}
+                        </div>
+                      )}
                     </div>
-                    {height > 25 && (
-                      <div className="text-[8px] sm:text-[9px] text-gray-300 truncate leading-tight">
-                        {section.section_id.split('-').pop()} · {meeting.building} {meeting.room}
-                      </div>
-                    )}
-                    {height > 35 && section.instructors.length > 0 && (
-                      <div className="hidden sm:block text-[9px] text-gray-400 truncate leading-tight">
-                        {section.instructors[0]}
-                      </div>
-                    )}
-                    {height > 48 && (
-                      <div className="hidden sm:block text-[9px] text-gray-500 truncate leading-tight">
-                        {minutesToTime(meeting.start_time)} - {minutesToTime(meeting.end_time)}
-                      </div>
-                    )}
+                  );
+                })
+            )}
+          </>
+        )}
+      </CalendarGrid>
 
-                    {/* Hover tooltip — desktop only */}
-                    <div className="hidden md:group-hover:block absolute left-full top-0 ml-2 z-20 bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl w-52 pointer-events-none">
-                      <div className="font-semibold text-white text-xs">{section.course_id} - {section.section_id.split('-')[1]}</div>
-                      <div className="text-xs text-gray-300 mt-1">{section.instructors.join(', ')}</div>
-                      <div className="text-xs text-gray-400 mt-1">{meeting.building} {meeting.room}</div>
-                      <div className="text-xs text-gray-400">{minutesToTime(meeting.start_time)} - {minutesToTime(meeting.end_time)}</div>
-                      <div className="flex gap-3 mt-2 text-[10px]">
-                        <span className="text-yellow-400">★ {section.professor_rating.toFixed(1)}</span>
-                        <span className="text-green-400">GPA: {section.avg_gpa.toFixed(2)}</span>
-                      </div>
-                      <div className="text-[10px] text-gray-500 mt-0.5">
-                        Seats: {section.open_seats}/{section.total_seats}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-          )}
-        </>
+      {popupData && (
+        <CoursePopup
+          section={popupData.section}
+          meeting={popupData.meeting}
+          color={popupData.color}
+          anchorRect={popupData.rect}
+          semester={semester}
+          onClose={() => setPopupData(null)}
+        />
       )}
-    </CalendarGrid>
+    </>
   );
 }
