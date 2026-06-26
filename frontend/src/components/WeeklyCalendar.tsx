@@ -44,7 +44,6 @@ function CoursePopup({ section, meeting, color, onClose, anchorRect, semester }:
     setPos({ top, left });
   }, [anchorRect]);
 
-  const isAsync = meeting ? isAsyncMeeting(meeting) : isAsyncSection(section);
   const sectionNum = section.section_id.split('-').pop();
   const courseId = section.course_id;
   const testudoUrl = `https://app.testudo.umd.edu/soc/${semester}/${courseId.replace(/[0-9]/g, '').trim()}/${courseId}`;
