@@ -2,9 +2,8 @@ import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import type { Schedule, Section, Meeting } from '../types';
 import { minutesToTime, parseDays, DAY_ORDER, COURSE_COLORS } from '../utils/timeUtils';
 
-function CoursePopup({ section, meeting, color, onClose, anchorRect, semester }: {
+function CoursePopup({ section, color, onClose, anchorRect, semester }: {
   section: Section;
-  meeting?: Meeting;
   color: string;
   onClose: () => void;
   anchorRect: DOMRect;
@@ -259,10 +258,10 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     [courseCount]
   );
 
-  const [popupData, setPopupData] = useState<{ section: Section; meeting?: Meeting; color: string; rect: DOMRect } | null>(null);
-  const handleCardClick = useCallback((e: React.MouseEvent, section: Section, color: string, meeting?: Meeting) => {
+  const [popupData, setPopupData] = useState<{ section: Section; color: string; rect: DOMRect } | null>(null);
+  const handleCardClick = useCallback((e: React.MouseEvent, section: Section, color: string) => {
     e.stopPropagation();
-    setPopupData({ section, meeting, color, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() });
+    setPopupData({ section, color, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() });
   }, []);
 
   // Elapsed timer for loading messages
@@ -453,7 +452,7 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
                   return (
                     <div
                       key={`${section.section_id}-${midx}`}
-                      onClick={(e) => handleCardClick(e, section, color, meeting)}
+                      onClick={(e) => handleCardClick(e, section, color)}
                       className="absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
                       style={{
                         top: `${top}px`,
@@ -491,7 +490,6 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
       {popupData && (
         <CoursePopup
           section={popupData.section}
-          meeting={popupData.meeting}
           color={popupData.color}
           anchorRect={popupData.rect}
           semester={semester}
