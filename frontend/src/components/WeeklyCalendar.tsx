@@ -1,117 +1,166 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import type { Schedule, Section, Meeting } from '../types';
 import { minutesToTime, parseDays, DAY_ORDER, COURSE_COLORS } from '../utils/timeUtils';
+import { fetchCourseDetail } from '../api/client';
+import type { CourseDetail } from '../api/client';
 
-function CoursePopup({ section, color, onClose, anchorRect, semester }: {
+function CourseInfoPanel({ section, color, onClose, semester, cachedDetail }: {
   section: Section;
   color: string;
   onClose: () => void;
-  anchorRect: DOMRect;
   semester: string;
+  cachedDetail?: CourseDetail;
 }) {
-  const popupRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [detail, setDetail] = useState<CourseDetail | null>(cachedDetail ?? null);
+  const loading = !detail;
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (popupRef.current && !popupRef.current.contains(e.target as Node)) onClose();
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('mousedown', handleClick);
+    if (cachedDetail) { setDetail(cachedDetail); return; }
+    fetchCourseDetail(section.course_id).then(d => { if (d) setDetail(d); });
+  }, [section.course_id, cachedDetail]);
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
     document.addEventListener('keydown', handleKey);
-    return () => { document.removeEventListener('mousedown', handleClick); document.removeEventListener('keydown', handleKey); };
+    return () => document.removeEventListener('keydown', handleKey);
   }, [onClose]);
-
-  useEffect(() => {
-    if (!popupRef.current) return;
-    const popup = popupRef.current;
-    const pw = popup.offsetWidth;
-    const ph = popup.offsetHeight;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    let left = anchorRect.right + 8;
-    let top = anchorRect.top;
-
-    if (left + pw > vw - 12) left = anchorRect.left - pw - 8;
-    if (left < 12) left = Math.max(12, (vw - pw) / 2);
-    if (top + ph > vh - 12) top = vh - ph - 12;
-    if (top < 12) top = 12;
-
-    setPos({ top, left });
-  }, [anchorRect]);
 
   const sectionNum = section.section_id.split('-').pop();
   const courseId = section.course_id;
-  const testudoUrl = `https://app.testudo.umd.edu/soc/${semester}/${courseId.replace(/[0-9]/g, '').trim()}/${courseId}`;
+  const dept = courseId.replace(/[0-9]/g, '').trim();
+  const testudoUrl = `https://app.testudo.umd.edu/soc/${semester}/${dept}/${courseId}`;
+  const planetTerpProf = section.instructors[0]
+    ? `https://planetterp.com/professor/${encodeURIComponent(section.instructors[0])}`
+    : null;
+
+  const rels = detail?.relationships;
 
   return (
-    <div className="fixed inset-0 z-50" style={{ pointerEvents: 'auto' }}>
-      <div
-        ref={popupRef}
-        className="fixed bg-gray-900 border border-gray-600 rounded-xl shadow-2xl w-64 sm:w-72 overflow-hidden"
-        style={{ top: pos.top, left: pos.left, borderTop: `3px solid ${color}` }}
-      >
-        <div className="p-4 space-y-3">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="font-bold text-white text-sm">{courseId}</div>
-              <div className="text-xs text-gray-400">Section {sectionNum}</div>
+    <div
+      className="border-t border-gray-700 bg-gray-900/95 backdrop-blur-sm overflow-y-auto"
+      style={{ maxHeight: '45%', borderTop: `3px solid ${color}` }}
+    >
+      <div className="p-3 sm:p-4">
+        {/* Header row */}
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="font-bold text-white text-base">{courseId}</span>
+              {detail?.name && (
+                <span className="text-gray-300 text-sm">- {detail.name}</span>
+              )}
+              <a
+                href={testudoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-red-400 hover:text-red-300 text-xs"
+              >
+                (view on Testudo)
+              </a>
             </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none -mt-1">&times;</button>
-          </div>
-
-          {/* Instructor */}
-          <div className="text-sm text-gray-200">
-            {section.instructors.length > 0 ? section.instructors.join(', ') : 'TBA'}
-          </div>
-
-          {/* Meetings */}
-          <div className="space-y-1">
-            {section.meetings.map((m, i) => (
-              <div key={i} className="text-xs text-gray-400">
-                {isAsyncMeeting(m) ? (
-                  <span className="uppercase">Online Async</span>
-                ) : (
-                  <>
-                    <span className="font-medium text-gray-300">{m.days}</span>{' '}
-                    {minutesToTime(m.start_time)} - {minutesToTime(m.end_time)}
-                    {m.building && <span className="text-gray-500"> · {m.building} {m.room}</span>}
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Stats */}
-          <div className="flex gap-4 pt-1">
-            <div className="text-center">
-              <div className="text-yellow-400 text-sm font-semibold">★ {section.professor_rating.toFixed(1)}</div>
-              <div className="text-[10px] text-gray-500">Rating</div>
-            </div>
-            <div className="text-center">
-              <div className="text-green-400 text-sm font-semibold">{section.avg_gpa.toFixed(2)}</div>
-              <div className="text-[10px] text-gray-500">Avg GPA</div>
-            </div>
-            <div className="text-center">
-              <div className="text-blue-400 text-sm font-semibold">{section.open_seats}/{section.total_seats}</div>
-              <div className="text-[10px] text-gray-500">Open Seats</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {loading ? '...' : `${detail?.credits ?? '?'} credits`} | Section {sectionNum}
             </div>
           </div>
-
-          {/* View on Testudo */}
-          <a
-            href={testudoUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block text-center text-xs font-medium text-red-400 hover:text-red-300 bg-red-400/10 hover:bg-red-400/20 rounded-lg py-2 transition-colors"
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-white text-xl leading-none flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full hover:bg-gray-700 transition-colors"
           >
-            View on Testudo →
-          </a>
+            &times;
+          </button>
         </div>
+
+        {/* Instructor + stats row */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3">
+          <div className="text-sm">
+            {planetTerpProf ? (
+              <a href={planetTerpProf} target="_blank" rel="noopener noreferrer" className="text-red-400 hover:text-red-300">
+                {section.instructors[0]}
+              </a>
+            ) : (
+              <span className="text-gray-300">TBA</span>
+            )}
+            {' '}
+            <span className="text-yellow-400 text-xs">{'★'.repeat(Math.round(section.professor_rating))}</span>
+          </div>
+
+          {section.meetings.map((m, i) => (
+            <div key={i} className="text-xs text-gray-400">
+              {isAsyncMeeting(m) ? (
+                <span className="uppercase">Online Async</span>
+              ) : (
+                <>
+                  <span className="font-medium text-gray-300">{m.days}</span>{' '}
+                  {minutesToTime(m.start_time)} - {minutesToTime(m.end_time)}
+                  {m.building && (
+                    <span className="text-gray-500"> in <span className="text-gray-400">{m.building} {m.room}</span></span>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+
+          <div className="text-xs text-gray-400">
+            {section.open_seats} / {section.total_seats} seats available
+          </div>
+        </div>
+
+        {/* Relationships */}
+        {rels && (
+          <div className="space-y-1.5 mb-3">
+            {rels.prereqs && (
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium underline">Prerequisite:</span>{' '}
+                <span className="text-gray-400">{rels.prereqs}</span>
+              </div>
+            )}
+            {rels.coreqs && (
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium underline">Corequisite:</span>{' '}
+                <span className="text-gray-400">{rels.coreqs}</span>
+              </div>
+            )}
+            {rels.restrictions && (
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium underline">Restriction:</span>{' '}
+                <span className="text-gray-400">{rels.restrictions}</span>
+              </div>
+            )}
+            {rels.credit_granted_for && (
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium underline">Credit only granted for:</span>{' '}
+                <span className="text-gray-400">{rels.credit_granted_for}</span>
+              </div>
+            )}
+            {rels.also_offered_as && (
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium underline">Also offered as:</span>{' '}
+                <span className="text-gray-400">{rels.also_offered_as}</span>
+              </div>
+            )}
+            {rels.formerly && (
+              <div className="text-xs">
+                <span className="text-gray-300 font-medium underline">Formerly:</span>{' '}
+                <span className="text-gray-400">{rels.formerly}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Gen Eds */}
+        {detail?.gen_ed && detail.gen_ed.length > 0 && (
+          <div className="text-xs mb-3">
+            <span className="text-gray-300 font-medium">Gen Ed: </span>
+            <span className="text-gray-400">{detail.gen_ed.flat().join(', ')}</span>
+          </div>
+        )}
+
+        {/* Description */}
+        {loading ? (
+          <div className="h-10 rounded bg-gray-800 animate-pulse" />
+        ) : detail?.description ? (
+          <p className="text-xs text-gray-400 leading-relaxed">{detail.description}</p>
+        ) : null}
       </div>
     </div>
   );
@@ -258,11 +307,27 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     [courseCount]
   );
 
-  const [popupData, setPopupData] = useState<{ section: Section; color: string; rect: DOMRect } | null>(null);
+  const [popupData, setPopupData] = useState<{ section: Section; color: string } | null>(null);
   const handleCardClick = useCallback((e: React.MouseEvent, section: Section, color: string) => {
     e.stopPropagation();
-    setPopupData({ section, color, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() });
+    setPopupData({ section, color });
   }, []);
+
+  // Prefetch course details for all courses in schedule
+  const [detailCache, setDetailCache] = useState<Record<string, CourseDetail>>({});
+  useEffect(() => {
+    if (!schedule) return;
+    const courseIds = [...new Set(schedule.sections.map(s => s.course_id))];
+    const missing = courseIds.filter(id => !detailCache[id]);
+    if (missing.length === 0) return;
+    Promise.all(missing.map(id => fetchCourseDetail(id).then(d => [id, d] as const))).then(results => {
+      setDetailCache(prev => {
+        const next = { ...prev };
+        for (const [id, d] of results) { if (d) next[id] = d; }
+        return next;
+      });
+    });
+  }, [schedule]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Elapsed timer for loading messages
   const [elapsed, setElapsed] = useState(0);
@@ -437,65 +502,67 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
   ) : undefined;
 
   return (
-    <>
-      <CalendarGrid hourHeight={hourHeight} timeColWidth={timeColWidth} hasOtherCol={hasOtherCol} otherContent={otherContent}>
-        {(day) => (
-          <>
-            {schedule.sections.map((section) =>
-              section.meetings
-                .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
-                .map((meeting, midx) => {
-                  const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
-                  const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
-                  const color = courseColors[section.course_id];
+    <div className="h-full flex flex-col">
+      <div className="flex-1 overflow-auto">
+        <CalendarGrid hourHeight={hourHeight} timeColWidth={timeColWidth} hasOtherCol={hasOtherCol} otherContent={otherContent}>
+          {(day) => (
+            <>
+              {schedule.sections.map((section) =>
+                section.meetings
+                  .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
+                  .map((meeting, midx) => {
+                    const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
+                    const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
+                    const color = courseColors[section.course_id];
 
-                  return (
-                    <div
-                      key={`${section.section_id}-${midx}`}
-                      onClick={(e) => handleCardClick(e, section, color)}
-                      className="absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
-                      style={{
-                        top: `${top}px`,
-                        height: `${Math.max(height, 20)}px`,
-                        backgroundColor: color + '30',
-                        borderLeft: `3px solid ${color}`,
-                      }}
-                    >
-                      <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
-                        {section.course_id}
+                    return (
+                      <div
+                        key={`${section.section_id}-${midx}`}
+                        onClick={(e) => handleCardClick(e, section, color)}
+                        className="absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
+                        style={{
+                          top: `${top}px`,
+                          height: `${Math.max(height, 20)}px`,
+                          backgroundColor: color + '30',
+                          borderLeft: `3px solid ${color}`,
+                        }}
+                      >
+                        <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
+                          {section.course_id}
+                        </div>
+                        {height > 25 && (
+                          <div className="text-[8px] sm:text-[9px] text-gray-300 truncate leading-tight">
+                            {section.section_id.split('-').pop()} · {meeting.building} {meeting.room}
+                          </div>
+                        )}
+                        {height > 35 && section.instructors.length > 0 && (
+                          <div className="hidden sm:block text-[9px] text-gray-400 truncate leading-tight">
+                            {section.instructors[0]}
+                          </div>
+                        )}
+                        {height > 48 && (
+                          <div className="hidden sm:block text-[9px] text-gray-500 truncate leading-tight">
+                            {minutesToTime(meeting.start_time)} - {minutesToTime(meeting.end_time)}
+                          </div>
+                        )}
                       </div>
-                      {height > 25 && (
-                        <div className="text-[8px] sm:text-[9px] text-gray-300 truncate leading-tight">
-                          {section.section_id.split('-').pop()} · {meeting.building} {meeting.room}
-                        </div>
-                      )}
-                      {height > 35 && section.instructors.length > 0 && (
-                        <div className="hidden sm:block text-[9px] text-gray-400 truncate leading-tight">
-                          {section.instructors[0]}
-                        </div>
-                      )}
-                      {height > 48 && (
-                        <div className="hidden sm:block text-[9px] text-gray-500 truncate leading-tight">
-                          {minutesToTime(meeting.start_time)} - {minutesToTime(meeting.end_time)}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-            )}
-          </>
-        )}
-      </CalendarGrid>
+                    );
+                  })
+              )}
+            </>
+          )}
+        </CalendarGrid>
+      </div>
 
       {popupData && (
-        <CoursePopup
+        <CourseInfoPanel
           section={popupData.section}
           color={popupData.color}
-          anchorRect={popupData.rect}
           semester={semester}
           onClose={() => setPopupData(null)}
+          cachedDetail={detailCache[popupData.section.course_id]}
         />
       )}
-    </>
+    </div>
   );
 }

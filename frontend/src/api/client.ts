@@ -37,6 +37,32 @@ export function warmSectionCache(courseId: string, semester: string = '202508'):
   }).catch(() => {}); // ignore errors
 }
 
+export interface CourseDetail {
+  course_id: string;
+  name: string;
+  credits: string | number;
+  description: string;
+  relationships: {
+    prereqs?: string;
+    coreqs?: string;
+    restrictions?: string;
+    credit_granted_for?: string;
+    also_offered_as?: string;
+    formerly?: string;
+  };
+  gen_ed: string[];
+}
+
+export async function fetchCourseDetail(courseId: string): Promise<CourseDetail | null> {
+  try {
+    const res = await fetch(`${API_BASE}/courses/${encodeURIComponent(courseId.toUpperCase())}/detail`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function optimize(request: OptimizationRequest): Promise<OptimizationResponse> {
   const res = await fetch(`${API_BASE}/optimize`, {
     method: 'POST',

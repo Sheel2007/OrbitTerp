@@ -305,6 +305,11 @@ async def warm_cache(course_id: str, semester: str = "202508"):
     return {"status": "warming"}
 
 
+@router.get("/courses/{course_id}/detail")
+async def get_course_detail(course_id: str):
+    return await umdio.get_course_detail(course_id.upper())
+
+
 @router.get("/buildings")
 async def get_buildings():
     return await umdio.get_all_buildings()

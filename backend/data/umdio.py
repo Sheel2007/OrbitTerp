@@ -72,6 +72,38 @@ async def search_courses(query: str = "", dept: str = "") -> list[dict]:
     return courses
 
 
+async def get_course_detail(course_id: str) -> dict:
+    cache_key = f"course_detail_umdio:{course_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        data = await _get(f"/courses/{course_id}")
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        result = {
+            "course_id": data.get("course_id", course_id),
+            "name": data.get("name", ""),
+            "credits": data.get("credits", "?"),
+            "description": data.get("description", ""),
+            "relationships": {
+                "prereqs": data.get("relationships", {}).get("prereqs", ""),
+                "coreqs": data.get("relationships", {}).get("coreqs", ""),
+                "restrictions": data.get("relationships", {}).get("restrictions", ""),
+                "credit_granted_for": data.get("relationships", {}).get("credit_granted_for", ""),
+                "also_offered_as": data.get("relationships", {}).get("also_offered_as", ""),
+                "formerly": data.get("relationships", {}).get("formerly", ""),
+            },
+            "gen_ed": data.get("gen_ed", []),
+        }
+        cache.set(cache_key, result, config.CACHE_TTL_COURSES)
+        return result
+    except Exception as e:
+        logger.warning(f"Failed to fetch course detail for {course_id}: {e}")
+        return {"course_id": course_id, "name": "", "credits": "?", "description": "", "relationships": {}, "gen_ed": []}
+
+
 async def get_sections(course_id: str, semester: str) -> list[dict]:
     cache_key = f"sections:{course_id}:{semester}"
     cached = cache.get(cache_key)
