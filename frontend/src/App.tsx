@@ -26,6 +26,7 @@ function App() {
   const [profWeight, setProfWeight] = useLocalStorage('ts:profWeight', 0.4);
   const [gapWeight, setGapWeight] = useLocalStorage('ts:gapWeight', 0.3);
   const [timeWeight, setTimeWeight] = useLocalStorage('ts:timeWeight', 0.3);
+  const [daysOff, setDaysOff] = useLocalStorage<string[]>('ts:daysOff', []);
   const [blockedSlotsArray, setBlockedSlotsArray] = useLocalStorage<string[]>('ts:blocked', []);
   const [aboutOpen, setAboutOpen] = useState(false);
 
@@ -42,6 +43,10 @@ function App() {
   const autoBlockedSlots = useMemo(() => {
     const auto = new Set<string>();
     DAY_ORDER.forEach(day => {
+      if (daysOff.includes(day)) {
+        for (let h = 8; h <= 21; h++) auto.add(`${day}-${h}`);
+        return;
+      }
       if (noEarlyMorning) {
         for (let h = 8; h < earlyBefore; h++) auto.add(`${day}-${h}`);
       }
@@ -53,7 +58,7 @@ function App() {
       }
     });
     return auto;
-  }, [noEarlyMorning, noEvening, lunchBreak, earlyBefore, eveningAfter, lunchStartHour, lunchEndHour]);
+  }, [noEarlyMorning, noEvening, lunchBreak, earlyBefore, eveningAfter, lunchStartHour, lunchEndHour, daysOff]);
 
   const allBlockedSlots = useMemo(() => {
     const merged = new Set(blockedSlots);
@@ -123,6 +128,7 @@ function App() {
     setProfWeight(0.4);
     setGapWeight(0.3);
     setTimeWeight(0.3);
+    setDaysOff([]);
     setBlockedSlots(new Set());
     reset();
   }
@@ -255,6 +261,7 @@ function App() {
               gapWeight={gapWeight} setGapWeight={setGapWeight}
               timeWeight={timeWeight} setTimeWeight={setTimeWeight}
               weightTotal={weightTotal} weightsValid={weightsValid}
+              daysOff={daysOff} setDaysOff={setDaysOff}
               blockedSlots={blockedSlots} toggleBlocked={toggleBlocked}
               autoBlockedSlots={autoBlockedSlots}
             />

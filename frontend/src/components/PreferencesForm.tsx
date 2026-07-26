@@ -28,6 +28,8 @@ interface Props {
   setTimeWeight: (v: number) => void;
   weightTotal: number;
   weightsValid: boolean;
+  daysOff: string[];
+  setDaysOff: (v: string[]) => void;
   blockedSlots: Set<string>;
   toggleBlocked: (key: string) => void;
   autoBlockedSlots: Set<string>;
@@ -64,6 +66,7 @@ export function PreferencesForm(props: Props) {
     gapWeight, setGapWeight,
     timeWeight, setTimeWeight,
     weightTotal, weightsValid,
+    daysOff, setDaysOff,
     blockedSlots, toggleBlocked,
     autoBlockedSlots,
   } = props;
@@ -166,20 +169,36 @@ export function PreferencesForm(props: Props) {
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs text-gray-400">Block out times</span>
-          <div className="flex gap-2">
-            <span className="flex items-center gap-1 text-[10px] text-gray-500">
-              <span className="w-2 h-2 rounded-sm bg-red-900/80 inline-block" /> Manual
-            </span>
-            <span className="flex items-center gap-1 text-[10px] text-gray-500">
-              <span className="w-2 h-2 rounded-sm bg-amber-800/80 inline-block" /> Auto
-            </span>
-          </div>
+          <span className="text-[9px] text-gray-600 italic">Tap a day header to block it</span>
+        </div>
+        <div className="flex gap-3 mb-1">
+          <span className="flex items-center gap-1 text-[9px] text-gray-500">
+            <span className="w-2 h-2 rounded-sm bg-red-900/80 inline-block" /> Manual
+          </span>
+          <span className="flex items-center gap-1 text-[9px] text-gray-500">
+            <span className="w-2 h-2 rounded-sm bg-amber-800/80 inline-block" /> Auto
+          </span>
+          <span className="flex items-center gap-1 text-[9px] text-gray-500">
+            <span className="w-2 h-2 rounded-sm bg-red-600 inline-block" /> Day off
+          </span>
         </div>
         <div className="grid grid-cols-6 gap-px bg-gray-700 rounded-md overflow-hidden">
           <div className="bg-gray-900 p-0.5" />
-          {DAY_ORDER.map(day => (
-            <div key={day} className="bg-gray-900 p-0.5 text-center text-[10px] font-medium text-gray-400">{day}</div>
-          ))}
+          {DAY_ORDER.map(day => {
+            const off = daysOff.includes(day);
+            return (
+              <button
+                key={day}
+                onClick={() => setDaysOff(off ? daysOff.filter(d => d !== day) : [...daysOff, day])}
+                className={`p-0.5 text-center text-[10px] font-medium transition-colors ${
+                  off ? 'bg-red-600 text-white' : 'bg-gray-900 text-gray-400 hover:text-white'
+                }`}
+                title={off ? `${day}: day off (click to remove)` : `Click to block ${day}`}
+              >
+                {day}
+              </button>
+            );
+          })}
           {HOURS.map(hour => (
             <React.Fragment key={hour}>
               <div className="bg-gray-900 p-0.5 text-center text-[9px] text-gray-500 leading-tight">
