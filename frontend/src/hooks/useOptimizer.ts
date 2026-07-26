@@ -59,6 +59,10 @@ export function useOptimizer() {
     });
   }
 
+  function updateScheduleSections(scheduleIndex: number, sections: import('../types').Section[]) {
+    setSchedules(prev => prev.map((s, i) => i === scheduleIndex ? { ...s, sections } : s));
+  }
+
   function reset() {
     setStatus('idle');
     setSchedules([]);
@@ -69,5 +73,5 @@ export function useOptimizer() {
     setMeta(null);
   }
 
-  return { status, schedules, scheduleLabels, selectedIndex, setSelectedIndex, error, warnings, meta, runOptimize, reset, removeSchedule };
+  return { status, schedules, scheduleLabels, selectedIndex, setSelectedIndex, error, warnings, meta, runOptimize, reset, removeSchedule, updateScheduleSections };
 }

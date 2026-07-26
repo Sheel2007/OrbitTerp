@@ -7,8 +7,9 @@ import { ScheduleResults } from './components/ScheduleResults';
 import { AboutModal } from './components/AboutModal';
 import { useOptimizer } from './hooks/useOptimizer';
 import { useLocalStorage } from './hooks/useLocalStorage';
-import { warmSectionCache } from './api/client';
-import { DAY_ORDER } from './utils/timeUtils';
+import { warmSectionCache, fetchCourseSections, searchCourses } from './api/client';
+import type { Section, Meeting } from './types';
+import { minutesToTime, DAY_ORDER, COURSE_COLORS } from './utils/timeUtils';
 
 function App() {
   const [selectedCourses, setSelectedCourses] = useLocalStorage<CourseResult[]>('ts:courses', []);
@@ -29,6 +30,14 @@ function App() {
   const [daysOff, setDaysOff] = useLocalStorage<string[]>('ts:daysOff', []);
   const [blockedSlotsArray, setBlockedSlotsArray] = useLocalStorage<string[]>('ts:blocked', []);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [editingSection, setEditingSection] = useState<Section | null>(null);
+  const [previewSection, setPreviewSection] = useState<Section | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [addQuery, setAddQuery] = useState('');
+  const [addCourseResults, setAddCourseResults] = useState<{ course_id: string; name: string }[]>([]);
+  const [addSelectedCourse, setAddSelectedCourse] = useState<string | null>(null);
+  const [addCourseSections, setAddCourseSections] = useState<Section[]>([]);
+  const [addLoading, setAddLoading] = useState(false);
 
   // Convert stored array to Set for internal use
   const blockedSlots = useMemo(() => new Set(blockedSlotsArray), [blockedSlotsArray]);
@@ -66,7 +75,8 @@ function App() {
     return merged;
   }, [blockedSlots, autoBlockedSlots]);
 
-  const { status, schedules, scheduleLabels, selectedIndex, setSelectedIndex, error, warnings, meta, runOptimize, reset, removeSchedule } = useOptimizer();
+  const { status, schedules, scheduleLabels, selectedIndex, setSelectedIndex, error, warnings, meta, runOptimize, reset, removeSchedule, updateScheduleSections } = useOptimizer();
+  const [allSections, setAllSections] = useLocalStorage<import('./types').Section[]>('ts:allSections', []);
 
   // Warm cache for all selected courses on mount + semester change
   useEffect(() => {
@@ -171,7 +181,118 @@ function App() {
     };
 
     runOptimize(request);
+
+    // Fetch all available sections in background for manual add feature
+    Promise.all(selectedCourses.map(c => fetchCourseSections(c.course_id, semester)))
+      .then(results => setAllSections(results.flat()));
   }
+
+  const handleRemoveSection = useCallback((sectionId: string) => {
+    const schedule = schedules[selectedIndex];
+    if (!schedule) return;
+    const updated = schedule.sections.filter(s => s.section_id !== sectionId);
+    if (updated.length === 0) {
+      removeSchedule(selectedIndex);
+    } else {
+      updateScheduleSections(selectedIndex, updated);
+    }
+  }, [schedules, selectedIndex, updateScheduleSections, removeSchedule]);
+
+  const handleAddSection = useCallback((section: Section) => {
+    const schedule = schedules[selectedIndex];
+    if (!schedule) return;
+    if (schedule.sections.some(s => s.section_id === section.section_id)) return;
+    updateScheduleSections(selectedIndex, [...schedule.sections, section]);
+    closeAdd();
+  }, [schedules, selectedIndex, updateScheduleSections]);
+
+  const handleSwapSection = useCallback((oldSectionId: string, newSection: Section) => {
+    const schedule = schedules[selectedIndex];
+    if (!schedule) return;
+    const updated = schedule.sections.map(s => s.section_id === oldSectionId ? newSection : s);
+    updateScheduleSections(selectedIndex, updated);
+    setEditingSection(null);
+    setPreviewSection(null);
+  }, [schedules, selectedIndex, updateScheduleSections]);
+
+  const handleEditSection = useCallback((section: Section) => {
+    setEditingSection(section);
+    setPreviewSection(null);
+    closeAdd();
+  }, []);
+
+  const editAlternatives = useMemo(() => {
+    if (!editingSection) return [];
+    const schedule = schedules[selectedIndex];
+    if (!schedule) return [];
+    const currentIds = new Set(schedule.sections.map(s => s.section_id));
+    return allSections.filter(s => s.course_id === editingSection.course_id && !currentIds.has(s.section_id));
+  }, [editingSection, schedules, selectedIndex, allSections]);
+
+  const editingColor = useMemo(() => {
+    if (!editingSection) return '';
+    const schedule = schedules[selectedIndex];
+    if (!schedule) return '';
+    const uniqueCourses = [...new Set(schedule.sections.map(s => s.course_id))];
+    const idx = uniqueCourses.indexOf(editingSection.course_id);
+    return COURSE_COLORS[idx >= 0 ? idx % COURSE_COLORS.length : 0];
+  }, [editingSection, schedules, selectedIndex]);
+
+  function isAsyncMeeting(m: Meeting): boolean {
+    return !m.days || m.days.trim() === '' || (m.start_time === 0 && m.end_time === 0);
+  }
+
+  // Add mode: search courses as user types
+  useEffect(() => {
+    if (!isAdding || addQuery.length < 2) { setAddCourseResults([]); return; }
+    const timer = setTimeout(async () => {
+      const results = await searchCourses(addQuery);
+      setAddCourseResults(results);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [addQuery, isAdding]);
+
+  // Add mode: fetch sections when course selected
+  useEffect(() => {
+    if (!addSelectedCourse) { setAddCourseSections([]); return; }
+    setAddLoading(true);
+    fetchCourseSections(addSelectedCourse, semester).then(sections => {
+      setAddCourseSections(sections);
+      setAddLoading(false);
+    });
+  }, [addSelectedCourse, semester]);
+
+  function closeAdd() {
+    setIsAdding(false);
+    setAddQuery('');
+    setAddCourseResults([]);
+    setAddSelectedCourse(null);
+    setAddCourseSections([]);
+    setPreviewSection(null);
+  }
+
+  const handleToggleAdd = useCallback(() => {
+    if (isAdding) {
+      closeAdd();
+    } else {
+      setIsAdding(true);
+      setEditingSection(null);
+      setPreviewSection(null);
+    }
+  }, [isAdding]);
+
+  // Preview color: for edit mode uses course's existing color, for add mode uses next available color
+  const addingColor = useMemo(() => {
+    if (!isAdding || !addSelectedCourse) return '';
+    const schedule = schedules[selectedIndex];
+    if (!schedule) return '';
+    const uniqueCourses = [...new Set(schedule.sections.map(s => s.course_id))];
+    const existingIdx = uniqueCourses.indexOf(addSelectedCourse);
+    if (existingIdx >= 0) return COURSE_COLORS[existingIdx % COURSE_COLORS.length];
+    return COURSE_COLORS[uniqueCourses.length % COURSE_COLORS.length];
+  }, [isAdding, addSelectedCourse, schedules, selectedIndex]);
+
+  const activePreviewColor = editingSection ? editingColor : addingColor;
 
   const weightTotal = Math.round(profWeight * 100) + Math.round(gapWeight * 100) + Math.round(timeWeight * 100);
   const weightsValid = weightTotal === 100;
@@ -232,6 +353,141 @@ function App() {
       <div className="flex-1 flex flex-col md:flex-row md:overflow-hidden">
         {/* Left sidebar — full width on mobile, fixed width on desktop */}
         <aside className="w-full md:w-[320px] flex-shrink-0 border-b md:border-b-0 md:border-r border-gray-800 bg-gray-900/40 md:overflow-y-auto">
+          {editingSection ? (
+            <div className="p-3 sm:p-4 space-y-3">
+              <div className="rounded-lg border border-gray-700 overflow-hidden" style={{ borderColor: editingColor + '60' }}>
+                <div className="px-3 py-2.5 flex items-center justify-between" style={{ backgroundColor: editingColor + '15' }}>
+                  <div>
+                    <div className="text-sm font-bold text-white">{editingSection.course_id}</div>
+                    <div className="text-xs text-gray-400">
+                      Current: {editingSection.section_id.split('-').pop()} ({editingSection.instructors[0] || 'TBA'})
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setEditingSection(null); setPreviewSection(null); }}
+                    className="text-gray-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800 text-xs flex items-center gap-1"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    Back
+                  </button>
+                </div>
+                <div className="overflow-y-auto" style={{ maxHeight: 'calc(100vh - 180px)' }}>
+                  {editAlternatives.map(alt => (
+                    <button
+                      key={alt.section_id}
+                      onClick={() => handleSwapSection(editingSection.section_id, alt)}
+                      onMouseEnter={() => setPreviewSection(alt)}
+                      onMouseLeave={() => setPreviewSection(null)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-gray-800/80 text-xs transition-colors border-t border-gray-800/50"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-white font-medium">{alt.section_id.split('-').pop()}</span>
+                        <span className={alt.open_seats > 0 ? 'text-gray-500' : 'text-red-400'}>
+                          {alt.open_seats}/{alt.total_seats}
+                          {alt.open_seats === 0 && <span className="ml-1">FULL</span>}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">{alt.instructors[0] || 'TBA'}</div>
+                      {alt.meetings.filter(m => !isAsyncMeeting(m)).map((m, i) => (
+                        <div key={i} className="text-[10px] text-gray-500">
+                          {m.days} {minutesToTime(m.start_time)}-{minutesToTime(m.end_time)}
+                          {m.building && ` · ${m.building} ${m.room}`}
+                        </div>
+                      ))}
+                      {alt.meetings.every(m => isAsyncMeeting(m)) && (
+                        <div className="text-[10px] text-gray-500 uppercase">Online Async</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : isAdding ? (
+            <div className="p-3 sm:p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold text-white">Add Course</div>
+                <button
+                  onClick={closeAdd}
+                  className="text-gray-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800 text-xs flex items-center gap-1"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                  Back
+                </button>
+              </div>
+              {!addSelectedCourse ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={addQuery}
+                    onChange={e => { setAddQuery(e.target.value); setAddSelectedCourse(null); }}
+                    placeholder="Search for a course (e.g. BMGT310, ECON200)..."
+                    className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-md text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    autoFocus
+                  />
+                  {addCourseResults.length > 0 && (
+                    <div className="overflow-y-auto rounded-md border border-gray-700" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+                      {addCourseResults.map(c => (
+                        <button
+                          key={c.course_id}
+                          onClick={() => setAddSelectedCourse(c.course_id)}
+                          className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-800/80 text-xs transition-colors border-t border-gray-800/50 first:border-t-0"
+                        >
+                          <span className="text-white font-medium">{c.course_id}</span>
+                          <span className="text-gray-400 truncate ml-2">{c.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { setAddSelectedCourse(null); setPreviewSection(null); }} className="text-gray-400 hover:text-white text-xs">← Back</button>
+                    <span className="text-xs text-white font-medium">{addSelectedCourse}</span>
+                  </div>
+                  {addLoading ? (
+                    <div className="text-[11px] text-gray-500 px-1">Loading sections...</div>
+                  ) : addCourseSections.length === 0 ? (
+                    <div className="text-[11px] text-gray-500 px-1">No sections found</div>
+                  ) : (
+                    <div className="overflow-y-auto rounded-md border border-gray-700" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+                      {addCourseSections.map(s => (
+                        <button
+                          key={s.section_id}
+                          onClick={() => handleAddSection(s)}
+                          onMouseEnter={() => setPreviewSection(s)}
+                          onMouseLeave={() => setPreviewSection(null)}
+                          className="w-full text-left px-3 py-2.5 hover:bg-gray-800/80 text-xs transition-colors border-t border-gray-800/50 first:border-t-0"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-white font-medium">{s.section_id.split('-').pop()}</span>
+                            <span className={s.open_seats > 0 ? 'text-gray-500' : 'text-red-400'}>
+                              {s.open_seats}/{s.total_seats}
+                              {s.open_seats === 0 && <span className="ml-1">FULL</span>}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-gray-400 mt-0.5">{s.instructors[0] || 'TBA'}</div>
+                          {s.meetings.filter(m => !isAsyncMeeting(m)).map((m, i) => (
+                            <div key={i} className="text-[10px] text-gray-500">
+                              {m.days} {minutesToTime(m.start_time)}-{minutesToTime(m.end_time)}
+                              {m.building && ` · ${m.building} ${m.room}`}
+                            </div>
+                          ))}
+                          {s.meetings.every(m => isAsyncMeeting(m)) && (
+                            <div className="text-[10px] text-gray-500 uppercase">Online Async</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
           <div className="p-3 sm:p-4 space-y-4">
             {/* Course search */}
             <CourseSearch
@@ -294,6 +550,7 @@ function App() {
               </button>
             </div>
           </div>
+          )}
         </aside>
 
         {/* Right: schedule tabs + calendar */}
@@ -321,6 +578,9 @@ function App() {
             selectedIndex={selectedIndex}
             onSelect={setSelectedIndex}
             onRemove={removeSchedule}
+            onToggleAdd={handleToggleAdd}
+            isAdding={isAdding}
+            isEditing={!!editingSection}
             semester={semester}
             meta={meta}
             loading={status === 'loading'}
@@ -333,6 +593,11 @@ function App() {
               loading={status === 'loading'}
               courseCount={selectedCourses.length}
               semester={semester}
+              onRemoveSection={handleRemoveSection}
+              onEditSection={isAdding ? undefined : handleEditSection}
+              previewSection={previewSection}
+              previewColor={activePreviewColor}
+              allSections={allSections}
             />
           </div>
         </div>

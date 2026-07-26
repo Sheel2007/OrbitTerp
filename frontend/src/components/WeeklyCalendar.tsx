@@ -171,6 +171,11 @@ interface Props {
   loading?: boolean;
   courseCount?: number;
   semester?: string;
+  onRemoveSection?: (sectionId: string) => void;
+  onEditSection?: (section: Section) => void;
+  previewSection?: Section | null;
+  previewColor?: string;
+  allSections?: Section[];
 }
 
 const START_HOUR = 8;
@@ -298,7 +303,7 @@ function CalendarGrid({ hourHeight, timeColWidth, hasOtherCol, children, otherCo
   );
 }
 
-export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, semester = '' }: Props) {
+export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, semester = '', onRemoveSection, onEditSection, previewSection, previewColor, allSections = [] }: Props) {
   const hourHeight = typeof window !== 'undefined' && window.innerWidth < 640 ? 40 : 56;
   const timeColWidth = typeof window !== 'undefined' && window.innerWidth < 640 ? 32 : 50;
 
@@ -312,6 +317,12 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     e.stopPropagation();
     setPopupData({ section, color });
   }, []);
+
+  const hasAlternatives = useCallback((section: Section) => {
+    if (!schedule) return false;
+    const currentIds = new Set(schedule.sections.map(s => s.section_id));
+    return allSections.some(s => s.course_id === section.course_id && !currentIds.has(s.section_id));
+  }, [schedule, allSections]);
 
   // Prefetch course details for all courses in schedule
   const [detailCache, setDetailCache] = useState<Record<string, CourseDetail>>({});
@@ -337,6 +348,74 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     const interval = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(interval);
   }, [loading]);
+
+  // Compute overlap layout: for each day, assign column index + total columns to each block
+  type BlockLayout = { colIndex: number; totalCols: number };
+  const overlapLayout = useMemo(() => {
+    if (!schedule) return {};
+    const layout: Record<string, Record<string, BlockLayout>> = {};
+
+    for (const day of DAY_ORDER) {
+      const blocks: { key: string; start: number; end: number }[] = [];
+
+      for (const section of schedule.sections) {
+        section.meetings
+          .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
+          .forEach((m, midx) => {
+            blocks.push({ key: `${section.section_id}-${midx}`, start: m.start_time, end: m.end_time });
+          });
+      }
+
+      if (previewSection && previewColor) {
+        previewSection.meetings
+          .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
+          .forEach((m, midx) => {
+            blocks.push({ key: `preview-${previewSection.section_id}-${midx}`, start: m.start_time, end: m.end_time });
+          });
+      }
+
+      blocks.sort((a, b) => a.start - b.start || a.end - b.end);
+
+      const cols: { end: number }[] = [];
+      const assigned: Record<string, number> = {};
+      for (const block of blocks) {
+        let placed = -1;
+        for (let c = 0; c < cols.length; c++) {
+          if (cols[c].end <= block.start) { placed = c; break; }
+        }
+        if (placed === -1) { placed = cols.length; cols.push({ end: 0 }); }
+        cols[placed].end = block.end;
+        assigned[block.key] = placed;
+      }
+
+      const groups: number[][] = [];
+      const visited = new Set<number>();
+      for (let i = 0; i < blocks.length; i++) {
+        if (visited.has(i)) continue;
+        const group = [i];
+        visited.add(i);
+        let maxEnd = blocks[i].end;
+        for (let j = i + 1; j < blocks.length; j++) {
+          if (blocks[j].start < maxEnd) {
+            group.push(j);
+            visited.add(j);
+            maxEnd = Math.max(maxEnd, blocks[j].end);
+          }
+        }
+        groups.push(group);
+      }
+
+      const dayLayout: Record<string, BlockLayout> = {};
+      for (const group of groups) {
+        const totalCols = Math.max(...group.map(i => assigned[blocks[i].key])) + 1;
+        for (const i of group) {
+          dayLayout[blocks[i].key] = { colIndex: assigned[blocks[i].key], totalCols };
+        }
+      }
+      layout[day] = dayLayout;
+    }
+    return layout;
+  }, [schedule, previewSection, previewColor]);
 
   // Skeleton loading state
   if (loading) {
@@ -460,6 +539,7 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     courseColors[cid] = COURSE_COLORS[i % COURSE_COLORS.length];
   });
 
+
   // Collect async sections (all meetings have no days / zero times)
   const asyncSections = schedule.sections.filter(isAsyncSection);
   const hasOtherCol = asyncSections.length > 0;
@@ -476,13 +556,34 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
           <div
             key={`async-${section.section_id}`}
             onClick={(e) => handleCardClick(e, section, color)}
-            className="relative rounded px-1 sm:px-1.5 py-1 overflow-hidden cursor-pointer transition-all hover:brightness-125 hover:shadow-lg"
+            className="relative rounded px-1 sm:px-1.5 py-1 overflow-hidden cursor-pointer group/card transition-all hover:brightness-125 hover:shadow-lg"
             style={{
               height: `${cardHeight}px`,
               backgroundColor: color + '25',
               borderLeft: `3px solid ${color}`,
             }}
           >
+            <div className="absolute top-0 right-0.5 flex items-center gap-0 z-10">
+              {onEditSection && hasAlternatives(section) && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setPopupData(null); onEditSection(section); }}
+                  className="text-gray-400 hover:text-blue-400 transition-colors p-0.5"
+                  title="Edit section"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+              )}
+              {onRemoveSection && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onRemoveSection(section.section_id); }}
+                  className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none"
+                >
+                  &times;
+                </button>
+              )}
+            </div>
             <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
               {section.course_id}
             </div>
@@ -514,19 +615,48 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
                     const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
                     const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
                     const color = courseColors[section.course_id];
+                    const blockKey = `${section.section_id}-${midx}`;
+                    const layout = overlapLayout[day]?.[blockKey];
+                    const colIndex = layout?.colIndex ?? 0;
+                    const totalCols = layout?.totalCols ?? 1;
+                    const leftPct = (colIndex / totalCols) * 100;
+                    const widthPct = (1 / totalCols) * 100;
 
                     return (
                       <div
-                        key={`${section.section_id}-${midx}`}
+                        key={blockKey}
                         onClick={(e) => handleCardClick(e, section, color)}
-                        className="absolute left-0.5 right-0.5 rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
+                        className="absolute rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer group/card transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
                         style={{
                           top: `${top}px`,
                           height: `${Math.max(height, 20)}px`,
+                          left: `calc(${leftPct}% + 2px)`,
+                          width: `calc(${widthPct}% - 4px)`,
                           backgroundColor: color + '30',
                           borderLeft: `3px solid ${color}`,
                         }}
                       >
+                        <div className="absolute top-0 right-0.5 flex items-center gap-0 z-10">
+                          {onEditSection && hasAlternatives(section) && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setPopupData(null); onEditSection(section); }}
+                              className="text-gray-400 hover:text-blue-400 transition-colors p-0.5"
+                              title="Edit section"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                              </svg>
+                            </button>
+                          )}
+                          {onRemoveSection && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onRemoveSection(section.section_id); }}
+                              className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none"
+                            >
+                              &times;
+                            </button>
+                          )}
+                        </div>
                         <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
                           {section.course_id}
                         </div>
@@ -549,6 +679,43 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
                     );
                   })
               )}
+              {/* Preview ghost blocks for hovered alternative */}
+              {previewSection && previewColor && previewSection.meetings
+                .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
+                .map((meeting, midx) => {
+                  const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
+                  const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
+                  const previewKey = `preview-${previewSection.section_id}-${midx}`;
+                  const layout = overlapLayout[day]?.[previewKey];
+                  const colIndex = layout?.colIndex ?? 0;
+                  const totalCols = layout?.totalCols ?? 1;
+                  const leftPct = (colIndex / totalCols) * 100;
+                  const widthPct = (1 / totalCols) * 100;
+                  return (
+                    <div
+                      key={previewKey}
+                      className="absolute rounded px-0.5 sm:px-1.5 py-0.5 pointer-events-none z-20 border-2 border-dashed"
+                      style={{
+                        top: `${top}px`,
+                        height: `${Math.max(height, 20)}px`,
+                        left: `calc(${leftPct}% + 2px)`,
+                        width: `calc(${widthPct}% - 4px)`,
+                        backgroundColor: previewColor + '18',
+                        borderColor: previewColor + '80',
+                      }}
+                    >
+                      <div className="text-[9px] sm:text-[11px] font-semibold truncate leading-tight" style={{ color: previewColor }}>
+                        {previewSection.course_id}
+                      </div>
+                      {height > 25 && (
+                        <div className="text-[8px] sm:text-[9px] truncate leading-tight" style={{ color: previewColor + 'AA' }}>
+                          {previewSection.section_id.split('-').pop()} · {previewSection.instructors[0] || 'TBA'}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              }
             </>
           )}
         </CalendarGrid>

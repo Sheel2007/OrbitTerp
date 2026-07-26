@@ -7,13 +7,15 @@ interface Props {
   selectedIndex: number;
   onSelect: (i: number) => void;
   onRemove: (i: number) => void;
+  onToggleAdd?: () => void;
+  isAdding?: boolean;
+  isEditing?: boolean;
   semester: string;
   meta: { numVariables: number; solver: string } | null;
   loading?: boolean;
 }
 
-export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSelect, onRemove, semester, meta: _meta, loading = false }: Props) {
-  // Skeleton loading tabs
+export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSelect, onRemove, onToggleAdd, isAdding = false, isEditing = false, semester, meta: _meta, loading = false }: Props) {
   if (loading && schedules.length === 0) {
     return (
       <div className="flex-shrink-0 border-b border-gray-800 bg-gray-900/60 px-3 sm:px-4 py-2">
@@ -58,7 +60,7 @@ export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSe
 
   return (
     <div className="flex-shrink-0 border-b border-gray-800 bg-gray-900/60 px-3 sm:px-4 py-2">
-      {/* Row 1: tabs + export */}
+      {/* Row 1: tabs + buttons */}
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0">
           {schedules.map((schedule, i) => (
@@ -91,23 +93,43 @@ export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSe
           ))}
         </div>
 
-        {/* Export button */}
         {selected && (
-          <button
-            onClick={handleExport}
-            className="flex-shrink-0 px-2 sm:px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5"
-            title="Download .ics for Google/Apple/Outlook Calendar"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            <span className="hidden sm:inline">Export</span>
-          </button>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {onToggleAdd && (
+              <button
+                onClick={onToggleAdd}
+                disabled={isEditing}
+                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                  isEditing
+                    ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                    : isAdding
+                      ? 'bg-red-600 text-white'
+                      : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                }`}
+                title={isEditing ? 'Close edit mode first' : 'Add a new course'}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                <span className="hidden sm:inline">Add</span>
+              </button>
+            )}
+            <button
+              onClick={handleExport}
+              className="px-2 sm:px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5"
+              title="Download .ics for Google/Apple/Outlook Calendar"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              <span className="hidden sm:inline">Export</span>
+            </button>
+          </div>
         )}
       </div>
 
-      {/* Row 2: score details (wraps on mobile) */}
-      {selected && (
+      {/* Row 2: score details */}
+      {selected && !isAdding && (
         <div className="flex items-center gap-2 sm:gap-2.5 mt-1.5 text-[11px] text-gray-500 flex-wrap">
           <span>★ <span className="text-yellow-400">{selected.avg_professor_rating.toFixed(1)}</span></span>
           {selected.pref_total_count > 0 && (

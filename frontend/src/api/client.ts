@@ -1,4 +1,4 @@
-import type { CourseResult, OptimizationRequest, OptimizationResponse } from '../types';
+import type { CourseResult, Section, OptimizationRequest, OptimizationResponse } from '../types';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000') + '/api';
 
@@ -60,6 +60,16 @@ export async function fetchCourseDetail(courseId: string): Promise<CourseDetail 
     return res.json();
   } catch {
     return null;
+  }
+}
+
+export async function fetchCourseSections(courseId: string, semester: string = '202508'): Promise<Section[]> {
+  try {
+    const res = await fetch(`${API_BASE}/courses/${encodeURIComponent(courseId.toUpperCase())}/sections?semester=${semester}`);
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
   }
 }
 
