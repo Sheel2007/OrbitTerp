@@ -53,6 +53,7 @@ export interface OptimizationRequest {
   course_ids: string[];
   semester: string;
   professor_prefs: Record<string, string>;  // course_id -> preferred professor
+  locked_sections: string[];  // section_ids pinned by user
   preferences: {
     blocked_times: BlockedSlot[];
     lunch_window: string[] | null;

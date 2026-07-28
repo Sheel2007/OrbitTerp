@@ -29,6 +29,7 @@ class OptimizationRequest(BaseModel):
     preferences: TimePreferenceInput = TimePreferenceInput()
     weights: PriorityWeightsInput = PriorityWeightsInput()
     professor_prefs: dict[str, str] = {}  # course_id -> preferred professor name
+    locked_sections: list[str] = []  # section_ids to keep fixed in all results
     num_results: int = 5
     solver: str = "qaoa"
 

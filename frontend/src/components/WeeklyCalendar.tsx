@@ -176,6 +176,8 @@ interface Props {
   previewSection?: Section | null;
   previewColor?: string;
   allSections?: Section[];
+  lockedSections?: Section[];
+  onRemoveLockedSection?: (sectionId: string) => void;
 }
 
 const START_HOUR = 8;
@@ -303,7 +305,7 @@ function CalendarGrid({ hourHeight, timeColWidth, hasOtherCol, children, otherCo
   );
 }
 
-export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, semester = '', onRemoveSection, onEditSection, previewSection, previewColor, allSections = [] }: Props) {
+export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, semester = '', onRemoveSection, onEditSection, previewSection, previewColor, allSections = [], lockedSections = [], onRemoveLockedSection }: Props) {
   const hourHeight = typeof window !== 'undefined' && window.innerWidth < 640 ? 40 : 56;
   const timeColWidth = typeof window !== 'undefined' && window.innerWidth < 640 ? 32 : 50;
 
@@ -349,16 +351,24 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     return () => clearInterval(interval);
   }, [loading]);
 
+  // Combine schedule sections + locked sections for display
+  const displaySections = useMemo(() => {
+    const scheduleSects = schedule?.sections ?? [];
+    const lockedIds = new Set(lockedSections.map(s => s.section_id));
+    const fromSchedule = scheduleSects.filter(s => !lockedIds.has(s.section_id));
+    return [...lockedSections, ...fromSchedule];
+  }, [schedule, lockedSections]);
+
   // Compute overlap layout: for each day, assign column index + total columns to each block
   type BlockLayout = { colIndex: number; totalCols: number };
   const overlapLayout = useMemo(() => {
-    if (!schedule) return {};
+    if (displaySections.length === 0 && !previewSection) return {};
     const layout: Record<string, Record<string, BlockLayout>> = {};
 
     for (const day of DAY_ORDER) {
       const blocks: { key: string; start: number; end: number }[] = [];
 
-      for (const section of schedule.sections) {
+      for (const section of displaySections) {
         section.meetings
           .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
           .forEach((m, midx) => {
@@ -415,7 +425,7 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
       layout[day] = dayLayout;
     }
     return layout;
-  }, [schedule, previewSection, previewColor]);
+  }, [displaySections, previewSection, previewColor]);
 
   // Skeleton loading state
   if (loading) {
@@ -483,8 +493,8 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     );
   }
 
-  // Empty state
-  if (!schedule) {
+  // Empty state — only show if no schedule AND no locked sections AND no preview
+  if (!schedule && lockedSections.length === 0 && !previewSection) {
     return (
       <div className="flex items-center justify-center h-full px-4">
         <div className="max-w-sm text-center space-y-6">
@@ -502,28 +512,28 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
               <span className="w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
               <div>
                 <p className="text-sm text-gray-200 font-medium">Search for courses</p>
-                <p className="text-xs text-gray-500">Type a course name or ID (e.g. CMSC216) in the search bar on the left</p>
+                <p className="text-xs text-gray-500">Type a course name or ID (e.g. CMSC216) in the search bar. Click to add it for optimization</p>
               </div>
             </div>
             <div className="flex gap-3 items-start">
               <span className="w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
               <div>
-                <p className="text-sm text-gray-200 font-medium">Set your preferences</p>
-                <p className="text-xs text-gray-500">Pick preferred professors, block out times, and adjust filters</p>
+                <p className="text-sm text-gray-200 font-medium">Lock enrolled sections</p>
+                <p className="text-xs text-gray-500">Already registered? Click the lock icon next to a search result to pick your exact section — the optimizer builds around it</p>
               </div>
             </div>
             <div className="flex gap-3 items-start">
               <span className="w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
               <div>
-                <p className="text-sm text-gray-200 font-medium">Click Optimize</p>
-                <p className="text-xs text-gray-500">The app finds the best schedules based on professor ratings, time gaps, and your preferences</p>
+                <p className="text-sm text-gray-200 font-medium">Set preferences & optimize</p>
+                <p className="text-xs text-gray-500">Block out times, pick preferred professors, then hit Optimize to find the best schedules</p>
               </div>
             </div>
             <div className="flex gap-3 items-start">
               <span className="w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">4</span>
               <div>
-                <p className="text-sm text-gray-200 font-medium">Compare and export</p>
-                <p className="text-xs text-gray-500">Browse top schedules, then export to Google Calendar, Apple Calendar, or Outlook</p>
+                <p className="text-sm text-gray-200 font-medium">Edit, compare & export</p>
+                <p className="text-xs text-gray-500">Swap individual sections, browse top schedules, then export to Google Calendar, Apple Calendar, or Outlook</p>
               </div>
             </div>
           </div>
@@ -532,16 +542,17 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
     );
   }
 
-  // Real schedule — separate async vs timed sections
+  // Real schedule or locked-only — separate async vs timed sections
+  const lockedIds = new Set(lockedSections.map(s => s.section_id));
   const courseColors: Record<string, string> = {};
-  const uniqueCourses = [...new Set(schedule.sections.map(s => s.course_id))];
+  const uniqueCourses = [...new Set(displaySections.map(s => s.course_id))];
   uniqueCourses.forEach((cid, i) => {
     courseColors[cid] = COURSE_COLORS[i % COURSE_COLORS.length];
   });
 
 
   // Collect async sections (all meetings have no days / zero times)
-  const asyncSections = schedule.sections.filter(isAsyncSection);
+  const asyncSections = displaySections.filter(isAsyncSection);
   const hasOtherCol = asyncSections.length > 0;
 
   // For timed sections, also check for individual async meetings within a section
@@ -567,7 +578,7 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
               {onEditSection && hasAlternatives(section) && (
                 <button
                   onClick={(e) => { e.stopPropagation(); setPopupData(null); onEditSection(section); }}
-                  className="text-gray-400 hover:text-blue-400 transition-colors p-0.5"
+                  className="text-gray-400 hover:text-blue-400 transition-colors p-0.5 opacity-0 group-hover/card:opacity-100"
                   title="Edit section"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -578,7 +589,7 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
               {onRemoveSection && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onRemoveSection(section.section_id); }}
-                  className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none"
+                  className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none opacity-0 group-hover/card:opacity-100"
                 >
                   &times;
                 </button>
@@ -608,13 +619,14 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
         <CalendarGrid hourHeight={hourHeight} timeColWidth={timeColWidth} hasOtherCol={hasOtherCol} otherContent={otherContent}>
           {(day) => (
             <>
-              {schedule.sections.map((section) =>
+              {displaySections.map((section) =>
                 section.meetings
                   .filter(m => !isAsyncMeeting(m) && parseDays(m.days).includes(day))
                   .map((meeting, midx) => {
                     const top = ((meeting.start_time - START_HOUR * 60) / 60) * hourHeight;
                     const height = ((meeting.end_time - meeting.start_time) / 60) * hourHeight;
                     const color = courseColors[section.course_id];
+                    const isLocked = lockedIds.has(section.section_id);
                     const blockKey = `${section.section_id}-${midx}`;
                     const layout = overlapLayout[day]?.[blockKey];
                     const colIndex = layout?.colIndex ?? 0;
@@ -626,7 +638,7 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
                       <div
                         key={blockKey}
                         onClick={(e) => handleCardClick(e, section, color)}
-                        className="absolute rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer group/card transition-all hover:z-10 hover:brightness-125 hover:shadow-lg"
+                        className={`absolute rounded px-0.5 sm:px-1.5 py-0.5 overflow-hidden cursor-pointer group/card transition-all hover:z-10 hover:brightness-125 hover:shadow-lg ${isLocked ? 'border border-dashed' : ''}`}
                         style={{
                           top: `${top}px`,
                           height: `${Math.max(height, 20)}px`,
@@ -634,13 +646,22 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
                           width: `calc(${widthPct}% - 4px)`,
                           backgroundColor: color + '30',
                           borderLeft: `3px solid ${color}`,
+                          ...(isLocked ? { borderColor: color + '80' } : {}),
                         }}
                       >
                         <div className="absolute top-0 right-0.5 flex items-center gap-0 z-10">
-                          {onEditSection && hasAlternatives(section) && (
+                          {isLocked && onRemoveLockedSection && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onRemoveLockedSection(section.section_id); }}
+                              className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none opacity-0 group-hover/card:opacity-100"
+                            >
+                              &times;
+                            </button>
+                          )}
+                          {!isLocked && onEditSection && hasAlternatives(section) && (
                             <button
                               onClick={(e) => { e.stopPropagation(); setPopupData(null); onEditSection(section); }}
-                              className="text-gray-400 hover:text-blue-400 transition-colors p-0.5"
+                              className="text-gray-400 hover:text-blue-400 transition-colors p-0.5 opacity-0 group-hover/card:opacity-100"
                               title="Edit section"
                             >
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -648,16 +669,21 @@ export function WeeklyCalendar({ schedule, loading = false, courseCount = 4, sem
                               </svg>
                             </button>
                           )}
-                          {onRemoveSection && (
+                          {!isLocked && onRemoveSection && (
                             <button
                               onClick={(e) => { e.stopPropagation(); onRemoveSection(section.section_id); }}
-                              className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none"
+                              className="text-base font-bold text-gray-400 hover:text-red-400 transition-colors p-0.5 leading-none opacity-0 group-hover/card:opacity-100"
                             >
                               &times;
                             </button>
                           )}
                         </div>
-                        <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight">
+                        <div className="text-[9px] sm:text-[11px] font-semibold text-white truncate leading-tight flex items-center gap-0.5">
+                          {isLocked && (
+                            <svg className="w-2.5 h-2.5 flex-shrink-0 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                            </svg>
+                          )}
                           {section.course_id}
                         </div>
                         {height > 25 && (

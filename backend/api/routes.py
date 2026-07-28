@@ -9,7 +9,7 @@ from ..data import umdio, planetterp
 from ..data.cache import cache
 from ..data.buildings import get_building_coords
 from ..optimizer.models import Section, Meeting, TimePreference, PriorityWeights
-from ..optimizer.qubo import build_qubo_matrix, score_schedule
+from ..optimizer.qubo import build_qubo_matrix, score_schedule, sections_conflict
 from ..optimizer.qaoa import solve_qaoa
 from ..optimizer.classical import brute_force_solve
 from .. import config
@@ -333,6 +333,7 @@ async def optimize(request: OptimizationRequest):
     full_courses = []  # courses where ALL sections have 0 open seats
     warnings_list = []
     sections: list[Section] = []
+    locked_section_ids = set(request.locked_sections)
 
     t_fetch_start = time.monotonic()
 
@@ -354,9 +355,11 @@ async def optimize(request: OptimizationRequest):
         if not course_sections:
             failed_courses.append(cid)
 
-        # Filter out sections with no open seats
-        open_sections = [s for s in course_sections if int(s.get("open_seats", 0) or 0) > 0]
-        if course_sections and not open_sections:
+        # Filter out sections with no open seats, but keep locked (enrolled) sections
+        open_sections = [s for s in course_sections if int(s.get("open_seats", 0) or 0) > 0 or s.get("section_id") in locked_section_ids]
+        non_locked_open = [s for s in course_sections if int(s.get("open_seats", 0) or 0) > 0 and s.get("section_id") not in locked_section_ids]
+        has_locked = any(s.get("section_id") in locked_section_ids for s in course_sections)
+        if course_sections and not non_locked_open and not has_locked:
             full_courses.append(cid)
             logger.info(f"All sections full for {cid}, skipping")
 
@@ -407,6 +410,55 @@ async def optimize(request: OptimizationRequest):
         msg += " The UMD API may be slow — try again."
         raise HTTPException(status_code=404, detail=msg)
 
+    # Separate locked sections from optimization pool
+    locked_sections: list[Section] = []
+    locked_course_ids: set[str] = set()
+    if locked_section_ids:
+        for s in sections:
+            if s.section_id in locked_section_ids:
+                locked_sections.append(s)
+                locked_course_ids.add(s.course_id)
+        # Remove locked courses entirely from optimization
+        sections = [s for s in sections if s.course_id not in locked_course_ids]
+        remaining_course_ids = [c for c in request.course_ids if c not in locked_course_ids]
+        logger.info(f"Locked {len(locked_sections)} sections from {len(locked_course_ids)} courses, optimizing {len(remaining_course_ids)} remaining")
+    else:
+        remaining_course_ids = list(request.course_ids)
+
+    # If all courses are locked, return single schedule with just locked sections
+    if not remaining_course_ids:
+        locked_section_outputs = []
+        for s in locked_sections:
+            locked_section_outputs.append(SectionOut(
+                section_id=s.section_id, course_id=s.course_id,
+                instructors=s.instructors,
+                meetings=[MeetingOut(days=m.days, start_time=m.start_time, end_time=m.end_time, building=m.building, room=m.room) for m in s.meetings],
+                professor_rating=s.professor_rating, avg_gpa=s.avg_gpa,
+                total_seats=s.total_seats, open_seats=s.open_seats,
+            ))
+        prefs_for_score = TimePreference(
+            blocked_times=[bt.dict() for bt in request.preferences.blocked_times],
+            lunch_window=tuple(request.preferences.lunch_window) if request.preferences.lunch_window else None,
+            no_early_morning=request.preferences.no_early_morning, no_evening=request.preferences.no_evening,
+            min_gap=request.preferences.min_gap, max_gap=request.preferences.max_gap,
+        )
+        weights_for_score = PriorityWeights(
+            professor_rating=request.weights.professor_rating,
+            gap_preference=request.weights.gap_preference,
+            time_preference=request.weights.time_preference,
+        )
+        scores = score_schedule(locked_sections, prefs_for_score, weights_for_score, request.professor_prefs)
+        return OptimizationResponse(
+            schedules=[ScheduleOut(
+                sections=locked_section_outputs, total_score=scores["total_score"],
+                professor_score=scores["professor_score"], gap_score=scores["gap_score"],
+                time_score=scores["time_score"], solver="locked",
+                avg_professor_rating=scores["avg_professor_rating"],
+                pref_match_count=scores["pref_match_count"], pref_total_count=scores["pref_total_count"],
+            )],
+            num_variables=0, solver_used="locked", warnings=warnings_list,
+        )
+
     prefs = TimePreference(
         blocked_times=[bt.dict() for bt in request.preferences.blocked_times],
         lunch_window=tuple(request.preferences.lunch_window) if request.preferences.lunch_window else None,
@@ -429,11 +481,11 @@ async def optimize(request: OptimizationRequest):
     solver_used = request.solver
     schedules = []
     N = len(sections)
-    num_courses = len(request.course_ids)
+    num_courses = len(remaining_course_ids)
 
     if request.solver in ("qaoa", "both"):
         t_qaoa_start = time.monotonic()
-        qaoa_results = solve_qaoa(Q, sections, variable_map, request.course_ids, request.num_results)
+        qaoa_results = solve_qaoa(Q, sections, variable_map, remaining_course_ids, request.num_results)
         t_qaoa_end = time.monotonic()
         logger.info(f"⏱ QAOA: {t_qaoa_end - t_qaoa_start:.1f}s, {len(qaoa_results)} results")
         schedules.extend(qaoa_results)
@@ -443,12 +495,29 @@ async def optimize(request: OptimizationRequest):
     skip_classical = num_courses > 4 or N > 20
     if request.solver in ("classical", "both") and not skip_classical:
         t_class_start = time.monotonic()
-        classical_results = brute_force_solve(Q, sections, variable_map, request.course_ids, request.num_results)
+        classical_results = brute_force_solve(Q, sections, variable_map, remaining_course_ids, request.num_results)
         t_class_end = time.monotonic()
         logger.info(f"⏱ CLASSICAL: {t_class_end - t_class_start:.1f}s, {len(classical_results)} results")
         schedules.extend(classical_results)
     elif skip_classical:
         logger.info(f"Skipping classical solver: {num_courses} courses, {N} sections")
+
+    # Inject locked sections into every schedule, filtering out conflicts
+    if locked_sections:
+        valid_schedules = []
+        for sched in schedules:
+            conflict = False
+            for locked in locked_sections:
+                for opt_sec in sched.sections:
+                    if sections_conflict(locked, opt_sec):
+                        conflict = True
+                        break
+                if conflict:
+                    break
+            if not conflict:
+                sched.sections = locked_sections + sched.sections
+                valid_schedules.append(sched)
+        schedules = valid_schedules
 
     # Re-score ALL schedules uniformly using user preferences and weights
     for sched in schedules:

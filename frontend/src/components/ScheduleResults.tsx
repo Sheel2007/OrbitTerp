@@ -7,15 +7,13 @@ interface Props {
   selectedIndex: number;
   onSelect: (i: number) => void;
   onRemove: (i: number) => void;
-  onToggleAdd?: () => void;
   isAdding?: boolean;
-  isEditing?: boolean;
   semester: string;
   meta: { numVariables: number; solver: string } | null;
   loading?: boolean;
 }
 
-export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSelect, onRemove, onToggleAdd, isAdding = false, isEditing = false, semester, meta: _meta, loading = false }: Props) {
+export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSelect, onRemove, isAdding = false, semester, meta: _meta, loading = false }: Props) {
   if (loading && schedules.length === 0) {
     return (
       <div className="flex-shrink-0 border-b border-gray-800 bg-gray-900/60 px-3 sm:px-4 py-2">
@@ -95,25 +93,6 @@ export function ScheduleResults({ schedules, scheduleLabels, selectedIndex, onSe
 
         {selected && (
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {onToggleAdd && (
-              <button
-                onClick={onToggleAdd}
-                disabled={isEditing}
-                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                  isEditing
-                    ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-                    : isAdding
-                      ? 'bg-red-600 text-white'
-                      : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                }`}
-                title={isEditing ? 'Close edit mode first' : 'Add a new course'}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                <span className="hidden sm:inline">Add</span>
-              </button>
-            )}
             <button
               onClick={handleExport}
               className="px-2 sm:px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md text-xs font-medium transition-colors flex items-center gap-1.5"
